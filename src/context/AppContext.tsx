@@ -21,6 +21,30 @@ import {
   initialAttendance,
 } from '../data/mockData';
 import { playFeedbackSound } from '../utils/sound';
+import {
+  auth,
+  onAuthStateChanged,
+  loginWithGoogle,
+  logoutUser,
+  testConnection,
+  User,
+} from '../firebase';
+import {
+  saveTeacherProfileToCloud,
+  saveClassToCloud,
+  deleteClassFromCloud,
+  saveStudentToCloud,
+  deleteStudentFromCloud,
+  saveAssignmentToCloud,
+  deleteAssignmentFromCloud,
+  saveGradeToCloud,
+  deleteGradeFromCloud,
+  saveAttendanceToCloud,
+  deleteAttendanceFromCloud,
+  saveStudentAssignmentToCloud,
+  uploadFullDataToCloud,
+  fetchFullDataFromCloud,
+} from '../services/firestoreSync';
 
 interface ToastState {
   id: string;
@@ -75,6 +99,15 @@ interface AppContextType {
   exportDataJSON: () => void;
   importDataJSON: (jsonString: string) => boolean;
   exportToCSV: (type: 'students' | 'grades' | 'attendance' | 'summary') => void;
+  // Cloud sync
+  currentUser: User | null;
+  cloudSyncStatus: 'disconnected' | 'syncing' | 'synced' | 'error';
+  lastSyncedAt: Date | null;
+  cloudError: string | null;
+  loginGoogle: () => Promise<void>;
+  logoutGoogle: () => Promise<void>;
+  syncNowToCloud: () => Promise<void>;
+  syncNowFromCloud: () => Promise<void>;
 }
 
 const LOCAL_STORAGE_KEY = 'thay_kieu_cao_long_qlht_v1';
@@ -206,6 +239,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [attendance]);
 
+  // Cloud sync states
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'disconnected' | 'syncing' | 'synced' | 'error'>('disconnected');
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+
+  // Initialize connection test and Firebase auth listener
+  useEffect(() => {
+    testConnection().then((ok) => {
+      if (ok) {
+        console.log('Firebase connection ready');
+      }
+    });
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        setCloudSyncStatus('syncing');
+        try {
+          const cloudData = await fetchFullDataFromCloud(user);
+          if (cloudData && (cloudData.classes.length > 0 || cloudData.students.length > 0)) {
+            setTeacherProfile(cloudData.teacherProfile);
+            setClasses(cloudData.classes);
+            setStudents(cloudData.students);
+            setAssignments(cloudData.assignments);
+            setStudentAssignments(cloudData.studentAssignments);
+            setGrades(cloudData.grades);
+            setAttendance(cloudData.attendance);
+            setCloudSyncStatus('synced');
+            setLastSyncedAt(new Date());
+            showToast(`Đã đồng bộ dữ liệu đám mây (${user.email})!`, 'success');
+          } else {
+            // First time cloud setup: upload current state
+            await uploadFullDataToCloud(user, {
+              teacherProfile,
+              classes,
+              students,
+              assignments,
+              studentAssignments,
+              grades,
+              attendance,
+            });
+            setCloudSyncStatus('synced');
+            setLastSyncedAt(new Date());
+            showToast(`Đã lưu toàn bộ dữ liệu ban đầu lên đám mây (${user.email})!`, 'success');
+          }
+        } catch (err: any) {
+          console.error('Lỗi đồng bộ đám mây:', err);
+          setCloudSyncStatus('error');
+          setCloudError(err?.message || 'Không thể đồng bộ đám mây');
+        }
+      } else {
+        setCloudSyncStatus('disconnected');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Helper for background cloud writes
+  const triggerCloudWrite = useCallback(async (writeFn: () => Promise<void>) => {
+    if (!currentUser) return;
+    try {
+      setCloudSyncStatus('syncing');
+      await writeFn();
+      setCloudSyncStatus('synced');
+      setLastSyncedAt(new Date());
+    } catch (err: any) {
+      console.error('Lỗi lưu đám mây:', err);
+      setCloudSyncStatus('error');
+      setCloudError(err?.message || 'Lỗi cập nhật dữ liệu ra đám mây');
+    }
+  }, [currentUser]);
+
   // Toast handler
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 5);
@@ -224,8 +331,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Profile actions
   const updateTeacherProfile = (updated: Partial<TeacherProfile>) => {
-    setTeacherProfile((prev) => ({ ...prev, ...updated }));
+    const newProfile = { ...teacherProfile, ...updated };
+    setTeacherProfile(newProfile);
     showToast('Đã lưu thông tin cấu hình thành công.');
+    if (currentUser) {
+      triggerCloudWrite(() => saveTeacherProfileToCloud(currentUser, newProfile));
+    }
   };
 
   // Class actions
@@ -234,10 +345,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newClass: ClassItem = { ...cls, id };
     setClasses((prev) => [...prev, newClass]);
     showToast(`Đã thêm lớp ${cls.name} thành công.`);
+    if (currentUser) {
+      triggerCloudWrite(() => saveClassToCloud(currentUser, newClass));
+    }
   };
 
   const updateClass = (id: string, updated: Partial<ClassItem>) => {
-    setClasses((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)));
+    let updatedClassItem: ClassItem | null = null;
+    setClasses((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          updatedClassItem = { ...c, ...updated };
+          return updatedClassItem;
+        }
+        return c;
+      })
+    );
     // If name changed, also update students
     if (updated.name) {
       setStudents((prev) =>
@@ -245,6 +368,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
     showToast('Đã cập nhật thông tin lớp học thành công.');
+    if (currentUser && updatedClassItem) {
+      triggerCloudWrite(() => saveClassToCloud(currentUser, updatedClassItem!));
+    }
   };
 
   const deleteClass = (id: string) => {
@@ -264,6 +390,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }))
     );
     showToast(`Đã xóa lớp ${target?.name || ''} và dữ liệu liên quan.`, 'info');
+    if (currentUser) {
+      triggerCloudWrite(() => deleteClassFromCloud(currentUser, id));
+    }
   };
 
   // Student actions
@@ -272,6 +401,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newStudent: Student = { ...studentData, id };
     setStudents((prev) => [...prev, newStudent]);
     showToast(`Đã thêm học sinh ${studentData.name} thành công.`);
+    if (currentUser) {
+      triggerCloudWrite(() => saveStudentToCloud(currentUser, newStudent));
+    }
   };
 
   const addStudentsBatch = (
@@ -280,6 +412,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     let addedCount = 0;
     let updatedCount = 0;
+    const modifiedOrCreatedStudents: Student[] = [];
 
     setStudents((prev) => {
       const studentMap = new Map(prev.map((s) => [s.code.trim().toUpperCase(), s]));
@@ -291,7 +424,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const existing = studentMap.get(normalizedCode)!;
           const targetIdx = next.findIndex((item) => item.id === existing.id);
           if (targetIdx !== -1) {
-            next[targetIdx] = {
+            const updatedStudent: Student = {
               ...existing,
               name: sData.name,
               gender: sData.gender,
@@ -300,14 +433,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               birthDate: sData.birthDate || existing.birthDate,
               notes: sData.notes || existing.notes,
             };
+            next[targetIdx] = updatedStudent;
+            modifiedOrCreatedStudents.push(updatedStudent);
             updatedCount++;
           }
         } else {
           const newId = `s-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
-          next.push({
+          const newStudent: Student = {
             ...sData,
             id: newId,
-          });
+          };
+          next.push(newStudent);
+          modifiedOrCreatedStudents.push(newStudent);
           addedCount++;
         }
       });
@@ -323,12 +460,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast(`Đã cập nhật thông tin cho ${updatedCount} học sinh từ file Excel.`);
     }
 
+    if (currentUser && modifiedOrCreatedStudents.length > 0) {
+      triggerCloudWrite(async () => {
+        for (const st of modifiedOrCreatedStudents) {
+          await saveStudentToCloud(currentUser, st);
+        }
+      });
+    }
+
     return { added: addedCount, updated: updatedCount };
   };
 
   const updateStudent = (id: string, updated: Partial<Student>) => {
-    setStudents((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)));
+    let updatedStudentItem: Student | null = null;
+    setStudents((prev) =>
+      prev.map((s) => {
+        if (s.id === id) {
+          updatedStudentItem = { ...s, ...updated };
+          return updatedStudentItem;
+        }
+        return s;
+      })
+    );
     showToast('Đã lưu thông tin học sinh thành công.');
+    if (currentUser && updatedStudentItem) {
+      triggerCloudWrite(() => saveStudentToCloud(currentUser, updatedStudentItem!));
+    }
   };
 
   const deleteStudent = (id: string) => {
@@ -338,6 +495,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAttendance((prev) => prev.filter((a) => a.studentId !== id));
     setStudentAssignments((prev) => prev.filter((sa) => sa.studentId !== id));
     showToast(`Đã xóa học sinh ${target?.name || ''}.`, 'info');
+    if (currentUser) {
+      triggerCloudWrite(() => deleteStudentFromCloud(currentUser, id));
+    }
   };
 
   // Assignment actions
@@ -346,11 +506,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newAsg: Assignment = { ...asgData, id };
     setAssignments((prev) => [newAsg, ...prev]);
     showToast(`Đã tạo bài tập "${asgData.title}" thành công.`);
+    if (currentUser) {
+      triggerCloudWrite(() => saveAssignmentToCloud(currentUser, newAsg));
+    }
   };
 
   const updateAssignment = (id: string, updated: Partial<Assignment>) => {
-    setAssignments((prev) => prev.map((a) => (a.id === id ? { ...a, ...updated } : a)));
+    let updatedAsgItem: Assignment | null = null;
+    setAssignments((prev) =>
+      prev.map((a) => {
+        if (a.id === id) {
+          updatedAsgItem = { ...a, ...updated };
+          return updatedAsgItem;
+        }
+        return a;
+      })
+    );
     showToast('Đã cập nhật bài tập thành công.');
+    if (currentUser && updatedAsgItem) {
+      triggerCloudWrite(() => saveAssignmentToCloud(currentUser, updatedAsgItem!));
+    }
   };
 
   const deleteAssignment = (id: string) => {
@@ -358,34 +533,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAssignments((prev) => prev.filter((a) => a.id !== id));
     setStudentAssignments((prev) => prev.filter((sa) => sa.assignmentId !== id));
     showToast(`Đã xóa bài tập "${target?.title || ''}".`, 'info');
+    if (currentUser) {
+      triggerCloudWrite(() => deleteAssignmentFromCloud(currentUser, id));
+    }
   };
 
   const toggleAssignmentCompletion = (assignmentId: string, studentId: string, isCompleted: boolean) => {
+    const statusRecord: StudentAssignmentStatus = {
+      assignmentId,
+      studentId,
+      isCompleted,
+      completedAt: isCompleted ? new Date().toISOString().split('T')[0] : undefined,
+    };
     setStudentAssignments((prev) => {
       const exists = prev.find((sa) => sa.assignmentId === assignmentId && sa.studentId === studentId);
       if (exists) {
         return prev.map((sa) =>
-          sa.assignmentId === assignmentId && sa.studentId === studentId
-            ? {
-                ...sa,
-                isCompleted,
-                completedAt: isCompleted ? new Date().toISOString().split('T')[0] : undefined,
-              }
-            : sa
+          sa.assignmentId === assignmentId && sa.studentId === studentId ? statusRecord : sa
         );
       } else {
-        return [
-          ...prev,
-          {
-            assignmentId,
-            studentId,
-            isCompleted,
-            completedAt: isCompleted ? new Date().toISOString().split('T')[0] : undefined,
-          },
-        ];
+        return [...prev, statusRecord];
       }
     });
     playFeedbackSound('click', teacherProfile.soundEnabled);
+    if (currentUser) {
+      triggerCloudWrite(() => saveStudentAssignmentToCloud(currentUser, statusRecord));
+    }
   };
 
   // Grade actions
@@ -394,32 +567,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newGrade: GradeRecord = { ...gradeData, id };
     setGrades((prev) => [newGrade, ...prev]);
     showToast('Đã nhập điểm thành công.');
+    if (currentUser) {
+      triggerCloudWrite(() => saveGradeToCloud(currentUser, newGrade));
+    }
   };
 
   const updateGrade = (id: string, updated: Partial<GradeRecord>) => {
-    setGrades((prev) => prev.map((g) => (g.id === id ? { ...g, ...updated } : g)));
+    let updatedGradeItem: GradeRecord | null = null;
+    setGrades((prev) =>
+      prev.map((g) => {
+        if (g.id === id) {
+          updatedGradeItem = { ...g, ...updated };
+          return updatedGradeItem;
+        }
+        return g;
+      })
+    );
     showToast('Đã cập nhật điểm thành công.');
+    if (currentUser && updatedGradeItem) {
+      triggerCloudWrite(() => saveGradeToCloud(currentUser, updatedGradeItem!));
+    }
   };
 
   const deleteGrade = (id: string) => {
     setGrades((prev) => prev.filter((g) => g.id !== id));
     showToast('Đã xóa điểm thành công.', 'info');
+    if (currentUser) {
+      triggerCloudWrite(() => deleteGradeFromCloud(currentUser, id));
+    }
   };
 
   // Attendance actions
   const markAttendance = (record: Omit<AttendanceRecord, 'id'>) => {
+    let finalRecord: AttendanceRecord;
     setAttendance((prev) => {
       const idx = prev.findIndex(
         (a) => a.studentId === record.studentId && a.date === record.date && a.classId === record.classId
       );
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = { ...next[idx], ...record };
+        finalRecord = { ...next[idx], ...record };
+        next[idx] = finalRecord;
         return next;
       }
-      return [...prev, { ...record, id: 'att-' + Date.now() + Math.random().toString(36).substring(2, 5) }];
+      finalRecord = { ...record, id: 'att-' + Date.now() + Math.random().toString(36).substring(2, 5) };
+      return [...prev, finalRecord];
     });
     playFeedbackSound('click', teacherProfile.soundEnabled);
+    if (currentUser) {
+      triggerCloudWrite(() => saveAttendanceToCloud(currentUser, finalRecord));
+    }
   };
 
   const markBatchAttendance = (
@@ -428,19 +625,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     status: 'present' | 'absent_excused' | 'absent_unexcused'
   ) => {
     const classStudents = students.filter((s) => s.classId === classId);
+    const additions: AttendanceRecord[] = classStudents.map((s) => ({
+      id: 'att-' + Date.now() + '-' + s.id,
+      studentId: s.id,
+      classId,
+      date,
+      status,
+    }));
     setAttendance((prev) => {
       const filtered = prev.filter((a) => !(a.classId === classId && a.date === date));
-      const additions: AttendanceRecord[] = classStudents.map((s) => ({
-        id: 'att-' + Date.now() + '-' + s.id,
-        studentId: s.id,
-        classId,
-        date,
-        status,
-      }));
       return [...filtered, ...additions];
     });
     const statusText = status === 'present' ? 'Có mặt' : status === 'absent_excused' ? 'Có phép' : 'Vắng';
     showToast(`Đã ghi nhận toàn bộ lớp (${statusText}) cho ngày ${date}.`);
+    if (currentUser && additions.length > 0) {
+      triggerCloudWrite(async () => {
+        for (const item of additions) {
+          await saveAttendanceToCloud(currentUser, item);
+        }
+      });
+    }
   };
 
   // Student progress calculation
@@ -719,6 +923,83 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Đã xuất báo cáo CSV (${type}) thành công.`);
   };
 
+  // Cloud actions
+  const loginGoogle = async () => {
+    try {
+      setCloudSyncStatus('syncing');
+      const user = await loginWithGoogle();
+      showToast(`Đăng nhập thành công với tài khoản: ${user.email}`);
+    } catch (err: any) {
+      setCloudSyncStatus('error');
+      showToast('Đăng nhập thất bại hoặc bị hủy: ' + (err?.message || ''), 'error');
+    }
+  };
+
+  const logoutGoogle = async () => {
+    try {
+      await logoutUser();
+      setCurrentUser(null);
+      setCloudSyncStatus('disconnected');
+      showToast('Đã đăng xuất tài khoản đồng bộ đám mây.', 'info');
+    } catch (err: any) {
+      showToast('Lỗi khi đăng xuất: ' + (err?.message || ''), 'error');
+    }
+  };
+
+  const syncNowToCloud = async () => {
+    if (!currentUser) {
+      showToast('Vui lòng đăng nhập tài khoản Google để tải lên đám mây.', 'error');
+      return;
+    }
+    try {
+      setCloudSyncStatus('syncing');
+      await uploadFullDataToCloud(currentUser, {
+        teacherProfile,
+        classes,
+        students,
+        assignments,
+        studentAssignments,
+        grades,
+        attendance,
+      });
+      setCloudSyncStatus('synced');
+      setLastSyncedAt(new Date());
+      showToast('Đã đồng bộ toàn bộ dữ liệu hiện tại lên Đám mây thành công!');
+    } catch (err: any) {
+      setCloudSyncStatus('error');
+      showToast('Lỗi đồng bộ lên đám mây: ' + (err?.message || ''), 'error');
+    }
+  };
+
+  const syncNowFromCloud = async () => {
+    if (!currentUser) {
+      showToast('Vui lòng đăng nhập tài khoản Google để tải dữ liệu từ đám mây.', 'error');
+      return;
+    }
+    try {
+      setCloudSyncStatus('syncing');
+      const data = await fetchFullDataFromCloud(currentUser);
+      if (data) {
+        setTeacherProfile(data.teacherProfile);
+        setClasses(data.classes);
+        setStudents(data.students);
+        setAssignments(data.assignments);
+        setStudentAssignments(data.studentAssignments);
+        setGrades(data.grades);
+        setAttendance(data.attendance);
+        setCloudSyncStatus('synced');
+        setLastSyncedAt(new Date());
+        showToast('Đã tải và cập nhật toàn bộ dữ liệu mới nhất từ Đám mây!');
+      } else {
+        showToast('Chưa có dữ liệu nào trên đám mây cho tài khoản này.', 'info');
+        setCloudSyncStatus('synced');
+      }
+    } catch (err: any) {
+      setCloudSyncStatus('error');
+      showToast('Lỗi tải dữ liệu từ đám mây: ' + (err?.message || ''), 'error');
+    }
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -757,6 +1038,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         exportDataJSON,
         importDataJSON,
         exportToCSV,
+        currentUser,
+        cloudSyncStatus,
+        lastSyncedAt,
+        cloudError,
+        loginGoogle,
+        logoutGoogle,
+        syncNowToCloud,
+        syncNowFromCloud,
       }}
     >
       {children}

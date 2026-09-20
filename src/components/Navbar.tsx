@@ -7,6 +7,10 @@ import {
   Printer,
   Calendar,
   Sparkles,
+  Cloud,
+  CloudCheck,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -14,7 +18,15 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
-  const { teacherProfile, updateTeacherProfile } = useApp();
+  const {
+    teacherProfile,
+    updateTeacherProfile,
+    currentUser,
+    cloudSyncStatus,
+    syncNowToCloud,
+    loginGoogle,
+    setActiveTab,
+  } = useApp();
 
   const handlePrint = () => {
     window.print();
@@ -76,6 +88,51 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
 
           {/* Right actions */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Cloud Sync Status / Button */}
+            {currentUser ? (
+              <button
+                type="button"
+                onClick={() => syncNowToCloud()}
+                title={`Đang đăng nhập: ${currentUser.email}. Bấm để đồng bộ ngay.`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  cloudSyncStatus === 'syncing'
+                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                    : cloudSyncStatus === 'error'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                }`}
+              >
+                {cloudSyncStatus === 'syncing' ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                    <span className="hidden sm:inline">Đang lưu ra ngoài...</span>
+                  </>
+                ) : cloudSyncStatus === 'error' ? (
+                  <>
+                    <CloudOff className="w-3.5 h-3.5 text-rose-600" />
+                    <span className="hidden sm:inline">Lỗi lưu đám mây</span>
+                  </>
+                ) : (
+                  <>
+                    <CloudCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="hidden sm:inline">Đã lưu ra ngoài</span>
+                    <span className="sm:hidden">Đồng bộ</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={loginGoogle}
+                title="Đăng nhập Google để lưu dữ liệu ra đám mây và đồng bộ nhiều thiết bị"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
+              >
+                <Cloud className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="hidden sm:inline">Cập nhật dữ liệu ra ngoài</span>
+                <span className="sm:hidden">Đồng bộ</span>
+              </button>
+            )}
+
             {/* Calendar Pill */}
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100/80 rounded-xl text-xs font-medium text-slate-600 border border-slate-200/60">
               <Calendar className="w-4 h-4 text-indigo-600" />
@@ -116,12 +173,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
               <Printer className="w-4 h-4 text-slate-600" />
               <span className="hidden sm:inline text-xs font-semibold">In trang</span>
             </button>
-
-            {/* Quick Math Badge */}
-            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-medium">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Năm học 2026 - 2027</span>
-            </div>
           </div>
         </div>
       </div>

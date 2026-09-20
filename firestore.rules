@@ -1,0 +1,154 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Catch-all Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(teacherId) {
+      return isSignedIn() && request.auth.uid == teacherId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Validators
+    function isValidTeacher(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && data.subject is string && data.subject.size() <= 100
+        && data.schoolName is string && data.schoolName.size() <= 150
+        && data.email is string && data.email.size() <= 150;
+    }
+
+    function isValidClass(data, teacherId) {
+      return data.id is string && data.id.size() <= 128
+        && data.teacherId == teacherId
+        && data.name is string && data.name.size() <= 50
+        && data.grade is number && data.grade >= 1 && data.grade <= 12
+        && data.homeroomTeacher is string && data.homeroomTeacher.size() <= 100
+        && data.academicYear is string && data.academicYear.size() <= 30;
+    }
+
+    function isValidStudent(data, teacherId) {
+      return data.id is string && data.id.size() <= 128
+        && data.teacherId == teacherId
+        && data.code is string && data.code.size() <= 50
+        && data.name is string && data.name.size() <= 100
+        && (data.gender == 'Nam' || data.gender == 'Nữ')
+        && data.classId is string && data.classId.size() <= 128
+        && data.className is string && data.className.size() <= 50;
+    }
+
+    function isValidAssignment(data, teacherId) {
+      return data.id is string && data.id.size() <= 128
+        && data.teacherId == teacherId
+        && data.title is string && data.title.size() <= 200
+        && data.subject is string && data.subject.size() <= 100
+        && data.status in ['Đang giao', 'Đã hoàn thành', 'Đã đóng']
+        && data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 100;
+    }
+
+    function isValidGrade(data, teacherId) {
+      return data.id is string && data.id.size() <= 128
+        && data.teacherId == teacherId
+        && data.studentId is string && data.studentId.size() <= 128
+        && data.classId is string && data.classId.size() <= 128
+        && data.examType in ['TX', 'BT', 'GK', 'CK']
+        && data.title is string && data.title.size() <= 150
+        && data.score is number && data.score >= 0 && data.score <= 10;
+    }
+
+    function isValidAttendance(data, teacherId) {
+      return data.id is string && data.id.size() <= 128
+        && data.teacherId == teacherId
+        && data.studentId is string && data.studentId.size() <= 128
+        && data.classId is string && data.classId.size() <= 128
+        && data.status in ['present', 'absent_excused', 'absent_unexcused'];
+    }
+
+    function isValidStudentAssignment(data, teacherId) {
+      return data.id is string && data.id.size() <= 128
+        && data.teacherId == teacherId
+        && data.assignmentId is string && data.assignmentId.size() <= 128
+        && data.studentId is string && data.studentId.size() <= 128
+        && data.isCompleted is bool;
+    }
+
+    // Connection test document
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Teacher Master Document
+    match /teachers/{teacherId} {
+      allow get: if isOwner(teacherId);
+      allow create: if isOwner(teacherId) && isValidId(teacherId) && isValidTeacher(incoming());
+      allow update: if isOwner(teacherId) && isValidId(teacherId) && isValidTeacher(incoming());
+      allow delete: if isOwner(teacherId);
+
+      // Classes Subcollection
+      match /classes/{classId} {
+        allow get, list: if isOwner(teacherId);
+        allow create: if isOwner(teacherId) && isValidId(classId) && isValidClass(incoming(), teacherId);
+        allow update: if isOwner(teacherId) && isValidId(classId) && isValidClass(incoming(), teacherId);
+        allow delete: if isOwner(teacherId) && isValidId(classId);
+      }
+
+      // Students Subcollection
+      match /students/{studentId} {
+        allow get, list: if isOwner(teacherId);
+        allow create: if isOwner(teacherId) && isValidId(studentId) && isValidStudent(incoming(), teacherId);
+        allow update: if isOwner(teacherId) && isValidId(studentId) && isValidStudent(incoming(), teacherId);
+        allow delete: if isOwner(teacherId) && isValidId(studentId);
+      }
+
+      // Assignments Subcollection
+      match /assignments/{assignmentId} {
+        allow get, list: if isOwner(teacherId);
+        allow create: if isOwner(teacherId) && isValidId(assignmentId) && isValidAssignment(incoming(), teacherId);
+        allow update: if isOwner(teacherId) && isValidId(assignmentId) && isValidAssignment(incoming(), teacherId);
+        allow delete: if isOwner(teacherId) && isValidId(assignmentId);
+      }
+
+      // Grades Subcollection
+      match /grades/{gradeId} {
+        allow get, list: if isOwner(teacherId);
+        allow create: if isOwner(teacherId) && isValidId(gradeId) && isValidGrade(incoming(), teacherId);
+        allow update: if isOwner(teacherId) && isValidId(gradeId) && isValidGrade(incoming(), teacherId);
+        allow delete: if isOwner(teacherId) && isValidId(gradeId);
+      }
+
+      // Attendance Subcollection
+      match /attendance/{attendanceId} {
+        allow get, list: if isOwner(teacherId);
+        allow create: if isOwner(teacherId) && isValidId(attendanceId) && isValidAttendance(incoming(), teacherId);
+        allow update: if isOwner(teacherId) && isValidId(attendanceId) && isValidAttendance(incoming(), teacherId);
+        allow delete: if isOwner(teacherId) && isValidId(attendanceId);
+      }
+
+      // Student Assignment Status Subcollection
+      match /studentAssignments/{statusId} {
+        allow get, list: if isOwner(teacherId);
+        allow create: if isOwner(teacherId) && isValidId(statusId) && isValidStudentAssignment(incoming(), teacherId);
+        allow update: if isOwner(teacherId) && isValidId(statusId) && isValidStudentAssignment(incoming(), teacherId);
+        allow delete: if isOwner(teacherId) && isValidId(statusId);
+      }
+    }
+  }
+}
