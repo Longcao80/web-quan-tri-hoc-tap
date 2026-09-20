@@ -1,0 +1,6 @@
+{
+  "name": "Trợ Lý Quản Trị Học Tập – Thầy Kiều Cao Long",
+  "description": "Web app quản trị học tập dành cho giáo viên môn Toán - Trường THCS Thạch Thất 2 – Phân hiệu Cẩm Yên",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
