@@ -10,7 +10,14 @@ import {
   TabType,
   StudentProgressSummary,
   ProgressStatus,
+  AppUser,
 } from '../types';
+import {
+  getCurrentAppUser,
+  setCurrentAppUser,
+  authenticateUser,
+  registerUserAccount,
+} from '../services/auth';
 import {
   initialTeacherProfile,
   initialClasses,
@@ -45,6 +52,25 @@ import {
   uploadFullDataToCloud,
   fetchFullDataFromCloud,
 } from '../services/firestoreSync';
+import {
+  testSupabaseConnection,
+  saveTeacherProfileToSupabase,
+  saveClassToSupabase,
+  deleteClassFromSupabase,
+  saveStudentToSupabase,
+  deleteStudentFromSupabase,
+  saveAssignmentToSupabase,
+  deleteAssignmentFromSupabase,
+  saveGradeToSupabase,
+  deleteGradeFromSupabase,
+  saveAttendanceToSupabase,
+  deleteAttendanceFromSupabase,
+  saveStudentAssignmentToSupabase,
+  uploadFullDataToSupabase,
+  fetchFullDataFromSupabase,
+  SUPABASE_SCHEMA_SQL,
+  SUPABASE_URL,
+} from '../services/supabase';
 
 interface ToastState {
   id: string;
@@ -108,6 +134,21 @@ interface AppContextType {
   logoutGoogle: () => Promise<void>;
   syncNowToCloud: () => Promise<void>;
   syncNowFromCloud: () => Promise<void>;
+  // Supabase Database Integration
+  supabaseStatus: 'disconnected' | 'connecting' | 'connected' | 'table_missing' | 'error';
+  supabaseError: string | null;
+  supabaseLastSyncedAt: Date | null;
+  supabaseMissingTables: string[];
+  supabaseUrl: string;
+  supabaseSchemaSql: string;
+  checkSupabaseStatus: () => Promise<void>;
+  syncNowToSupabase: () => Promise<boolean>;
+  syncNowFromSupabase: () => Promise<boolean>;
+  // Account Authentication
+  appUser: AppUser | null;
+  loginWithCredentials: (username: string, password: string) => Promise<{ success: boolean; message: string }>;
+  registerAccount: (username: string, password: string, fullName: string, email?: string) => Promise<{ success: boolean; message: string }>;
+  logoutAppUser: () => void;
 }
 
 const LOCAL_STORAGE_KEY = 'thay_kieu_cao_long_qlht_v1';
@@ -239,6 +280,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [attendance]);
 
+  // Account Authentication state
+  const [appUser, setAppUser] = useState<AppUser | null>(() => getCurrentAppUser());
+
   // Cloud sync states
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'disconnected' | 'syncing' | 'synced' | 'error'>('disconnected');
@@ -298,6 +342,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsubscribe();
   }, []);
 
+  // Supabase state
+  const [supabaseStatus, setSupabaseStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'table_missing' | 'error'>('connecting');
+  const [supabaseError, setSupabaseError] = useState<string | null>(null);
+  const [supabaseLastSyncedAt, setSupabaseLastSyncedAt] = useState<Date | null>(null);
+  const [supabaseMissingTables, setSupabaseMissingTables] = useState<string[]>([]);
+
+  // Check Supabase status
+  const checkSupabaseStatus = useCallback(async () => {
+    setSupabaseStatus('connecting');
+    setSupabaseError(null);
+    try {
+      const res = await testSupabaseConnection();
+      if (res.connected) {
+        if (res.tablesExist) {
+          setSupabaseStatus('connected');
+          setSupabaseMissingTables([]);
+        } else {
+          setSupabaseStatus('table_missing');
+          setSupabaseMissingTables(res.missingTables);
+          setSupabaseError(res.message);
+        }
+      } else {
+        setSupabaseStatus('error');
+        setSupabaseError(res.message);
+      }
+    } catch (err: any) {
+      setSupabaseStatus('error');
+      setSupabaseError(err?.message || 'Không thể kiểm tra kết nối Supabase');
+    }
+  }, []);
+
+  // Initial Supabase check on load
+  useEffect(() => {
+    checkSupabaseStatus();
+  }, [checkSupabaseStatus]);
+
   // Helper for background cloud writes
   const triggerCloudWrite = useCallback(async (writeFn: () => Promise<void>) => {
     if (!currentUser) return;
@@ -312,6 +392,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCloudError(err?.message || 'Lỗi cập nhật dữ liệu ra đám mây');
     }
   }, [currentUser]);
+
+  // Helper for background Supabase writes
+  const triggerSupabaseWrite = useCallback(async (writeFn: () => Promise<boolean>) => {
+    try {
+      const ok = await writeFn();
+      if (ok) {
+        setSupabaseLastSyncedAt(new Date());
+      }
+    } catch (err) {
+      console.warn('Lỗi ghi Supabase chạy nền:', err);
+    }
+  }, []);
 
   // Toast handler
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -337,6 +429,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveTeacherProfileToCloud(currentUser, newProfile));
     }
+    triggerSupabaseWrite(() => saveTeacherProfileToSupabase(newProfile));
   };
 
   // Class actions
@@ -348,6 +441,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveClassToCloud(currentUser, newClass));
     }
+    triggerSupabaseWrite(() => saveClassToSupabase(newClass));
   };
 
   const updateClass = (id: string, updated: Partial<ClassItem>) => {
@@ -371,6 +465,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser && updatedClassItem) {
       triggerCloudWrite(() => saveClassToCloud(currentUser, updatedClassItem!));
     }
+    if (updatedClassItem) {
+      triggerSupabaseWrite(() => saveClassToSupabase(updatedClassItem!));
+    }
   };
 
   const deleteClass = (id: string) => {
@@ -393,6 +490,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => deleteClassFromCloud(currentUser, id));
     }
+    triggerSupabaseWrite(() => deleteClassFromSupabase(id));
   };
 
   // Student actions
@@ -404,6 +502,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveStudentToCloud(currentUser, newStudent));
     }
+    triggerSupabaseWrite(() => saveStudentToSupabase(newStudent));
   };
 
   const addStudentsBatch = (
@@ -468,6 +567,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
+    if (modifiedOrCreatedStudents.length > 0) {
+      triggerSupabaseWrite(async () => {
+        for (const st of modifiedOrCreatedStudents) {
+          await saveStudentToSupabase(st);
+        }
+        return true;
+      });
+    }
+
     return { added: addedCount, updated: updatedCount };
   };
 
@@ -486,6 +594,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser && updatedStudentItem) {
       triggerCloudWrite(() => saveStudentToCloud(currentUser, updatedStudentItem!));
     }
+    if (updatedStudentItem) {
+      triggerSupabaseWrite(() => saveStudentToSupabase(updatedStudentItem!));
+    }
   };
 
   const deleteStudent = (id: string) => {
@@ -498,6 +609,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => deleteStudentFromCloud(currentUser, id));
     }
+    triggerSupabaseWrite(() => deleteStudentFromSupabase(id));
   };
 
   // Assignment actions
@@ -509,6 +621,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveAssignmentToCloud(currentUser, newAsg));
     }
+    triggerSupabaseWrite(() => saveAssignmentToSupabase(newAsg));
   };
 
   const updateAssignment = (id: string, updated: Partial<Assignment>) => {
@@ -526,6 +639,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser && updatedAsgItem) {
       triggerCloudWrite(() => saveAssignmentToCloud(currentUser, updatedAsgItem!));
     }
+    if (updatedAsgItem) {
+      triggerSupabaseWrite(() => saveAssignmentToSupabase(updatedAsgItem!));
+    }
   };
 
   const deleteAssignment = (id: string) => {
@@ -536,6 +652,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => deleteAssignmentFromCloud(currentUser, id));
     }
+    triggerSupabaseWrite(() => deleteAssignmentFromSupabase(id));
   };
 
   const toggleAssignmentCompletion = (assignmentId: string, studentId: string, isCompleted: boolean) => {
@@ -559,6 +676,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveStudentAssignmentToCloud(currentUser, statusRecord));
     }
+    triggerSupabaseWrite(() => saveStudentAssignmentToSupabase(statusRecord));
   };
 
   // Grade actions
@@ -570,6 +688,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveGradeToCloud(currentUser, newGrade));
     }
+    triggerSupabaseWrite(() => saveGradeToSupabase(newGrade));
   };
 
   const updateGrade = (id: string, updated: Partial<GradeRecord>) => {
@@ -587,6 +706,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser && updatedGradeItem) {
       triggerCloudWrite(() => saveGradeToCloud(currentUser, updatedGradeItem!));
     }
+    if (updatedGradeItem) {
+      triggerSupabaseWrite(() => saveGradeToSupabase(updatedGradeItem!));
+    }
   };
 
   const deleteGrade = (id: string) => {
@@ -595,6 +717,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => deleteGradeFromCloud(currentUser, id));
     }
+    triggerSupabaseWrite(() => deleteGradeFromSupabase(id));
   };
 
   // Attendance actions
@@ -617,6 +740,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       triggerCloudWrite(() => saveAttendanceToCloud(currentUser, finalRecord));
     }
+    triggerSupabaseWrite(() => saveAttendanceToSupabase(finalRecord));
   };
 
   const markBatchAttendance = (
@@ -643,6 +767,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         for (const item of additions) {
           await saveAttendanceToCloud(currentUser, item);
         }
+      });
+    }
+    if (additions.length > 0) {
+      triggerSupabaseWrite(async () => {
+        for (const item of additions) {
+          await saveAttendanceToSupabase(item);
+        }
+        return true;
       });
     }
   };
@@ -1000,6 +1132,126 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Supabase Manual Sync Actions
+  const syncNowToSupabase = async (): Promise<boolean> => {
+    try {
+      setSupabaseStatus('connecting');
+      const res = await uploadFullDataToSupabase({
+        teacherProfile,
+        classes,
+        students,
+        assignments,
+        studentAssignments,
+        grades,
+        attendance,
+      });
+      if (res.success) {
+        setSupabaseStatus('connected');
+        setSupabaseLastSyncedAt(new Date());
+        showToast('Đã đồng bộ toàn bộ dữ liệu lên Supabase thành công!', 'success');
+        return true;
+      } else {
+        if (
+          res.message.toLowerCase().includes('relation') ||
+          res.message.toLowerCase().includes('does not exist') ||
+          res.message.includes('42P01')
+        ) {
+          setSupabaseStatus('table_missing');
+        } else {
+          setSupabaseStatus('error');
+        }
+        setSupabaseError(res.message);
+        showToast(res.message, 'error');
+        return false;
+      }
+    } catch (err: any) {
+      setSupabaseStatus('error');
+      const msg = err?.message || 'Lỗi khi đồng bộ lên Supabase';
+      setSupabaseError(msg);
+      showToast(msg, 'error');
+      return false;
+    }
+  };
+
+  const syncNowFromSupabase = async (): Promise<boolean> => {
+    try {
+      setSupabaseStatus('connecting');
+      const res = await fetchFullDataFromSupabase();
+      if (res.success && res.data) {
+        setTeacherProfile(res.data.teacherProfile);
+        setClasses(res.data.classes);
+        setStudents(res.data.students);
+        setAssignments(res.data.assignments);
+        setStudentAssignments(res.data.studentAssignments);
+        setGrades(res.data.grades);
+        setAttendance(res.data.attendance);
+        setSupabaseStatus('connected');
+        setSupabaseLastSyncedAt(new Date());
+        showToast('Đã tải và cập nhật toàn bộ dữ liệu mới nhất từ Supabase!', 'success');
+        return true;
+      } else {
+        if (
+          res.message.toLowerCase().includes('relation') ||
+          res.message.toLowerCase().includes('does not exist') ||
+          res.message.includes('42P01')
+        ) {
+          setSupabaseStatus('table_missing');
+        } else {
+          setSupabaseStatus('error');
+        }
+        setSupabaseError(res.message);
+        showToast(res.message, 'error');
+        return false;
+      }
+    } catch (err: any) {
+      setSupabaseStatus('error');
+      const msg = err?.message || 'Lỗi khi tải từ Supabase';
+      setSupabaseError(msg);
+      showToast(msg, 'error');
+      return false;
+    }
+  };
+
+  // Account Authentication actions
+  const loginWithCredentials = async (username: string, password: string) => {
+    const res = await authenticateUser(username, password);
+    if (res.success && res.user) {
+      setAppUser(res.user);
+      if (res.user.fullName && res.user.fullName !== 'Quản Trị Viên') {
+        setTeacherProfile((prev) => ({ ...prev, name: res.user!.fullName }));
+      }
+      showToast(res.message, 'success');
+    } else {
+      showToast(res.message, 'error');
+    }
+    return { success: res.success, message: res.message };
+  };
+
+  const registerAccount = async (
+    username: string,
+    password: string,
+    fullName: string,
+    email?: string
+  ) => {
+    const res = await registerUserAccount(username, password, fullName, email);
+    if (res.success && res.user) {
+      setAppUser(res.user);
+      if (fullName) {
+        setTeacherProfile((prev) => ({ ...prev, name: fullName }));
+      }
+      showToast(res.message, 'success');
+    } else {
+      showToast(res.message, 'error');
+    }
+    return { success: res.success, message: res.message };
+  };
+
+  const logoutAppUser = () => {
+    setCurrentAppUser(null);
+    setAppUser(null);
+    showToast('Đã đăng xuất tài khoản thành công.', 'info');
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -1046,6 +1298,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logoutGoogle,
         syncNowToCloud,
         syncNowFromCloud,
+        // Supabase
+        supabaseStatus,
+        supabaseError,
+        supabaseLastSyncedAt,
+        supabaseMissingTables,
+        supabaseUrl: SUPABASE_URL,
+        supabaseSchemaSql: SUPABASE_SCHEMA_SQL,
+        checkSupabaseStatus,
+        syncNowToSupabase,
+        syncNowFromSupabase,
+        // Account Authentication
+        appUser,
+        loginWithCredentials,
+        registerAccount,
+        logoutAppUser,
       }}
     >
       {children}

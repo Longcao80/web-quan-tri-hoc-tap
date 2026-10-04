@@ -11,6 +11,9 @@ import {
   CloudCheck,
   CloudOff,
   RefreshCw,
+  Database,
+  LogOut,
+  User,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -26,6 +29,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
     syncNowToCloud,
     loginGoogle,
     setActiveTab,
+    supabaseStatus,
+    syncNowToSupabase,
+    appUser,
+    logoutAppUser,
   } = useApp();
 
   const handlePrint = () => {
@@ -88,6 +95,48 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
 
           {/* Right actions */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Supabase Status Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (supabaseStatus === 'table_missing') {
+                  setActiveTab('settings');
+                } else {
+                  syncNowToSupabase();
+                }
+              }}
+              title={
+                supabaseStatus === 'connected'
+                  ? 'Supabase: Đã kết nối. Bấm để đồng bộ ngay.'
+                  : supabaseStatus === 'table_missing'
+                  ? 'Supabase: Cần tạo bảng. Bấm để xem mã SQL trong Cài Đặt.'
+                  : supabaseStatus === 'connecting'
+                  ? 'Đang kết nối Supabase...'
+                  : 'Supabase: Lỗi kết nối. Bấm để mở Cài Đặt.'
+              }
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                supabaseStatus === 'connected'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                  : supabaseStatus === 'table_missing'
+                  ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 animate-pulse'
+                  : supabaseStatus === 'connecting'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                  : 'bg-rose-50 text-rose-700 border-rose-200'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">
+                {supabaseStatus === 'connected'
+                  ? 'Supabase: Sẵn sàng'
+                  : supabaseStatus === 'table_missing'
+                  ? 'Supabase: Cần tạo bảng'
+                  : supabaseStatus === 'connecting'
+                  ? 'Supabase: Đang kết nối'
+                  : 'Supabase: Chưa kết nối'}
+              </span>
+              <span className="sm:hidden">Supabase</span>
+            </button>
+
             {/* Cloud Sync Status / Button */}
             {currentUser ? (
               <button
@@ -173,6 +222,38 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
               <Printer className="w-4 h-4 text-slate-600" />
               <span className="hidden sm:inline text-xs font-semibold">In trang</span>
             </button>
+
+            {/* Logged in User Profile & Logout */}
+            {appUser && (
+              <div className="flex items-center gap-2 pl-1 sm:pl-2 border-l border-slate-200">
+                <div
+                  title={`Đang đăng nhập: ${appUser.fullName} (@${appUser.username})`}
+                  className="hidden md:flex items-center gap-2 py-1 px-2.5 bg-slate-100 rounded-xl border border-slate-200"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
+                    {appUser.fullName.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="text-left text-xs leading-tight min-w-0">
+                    <div className="font-bold text-slate-900 truncate max-w-[110px]">
+                      {appUser.fullName}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-mono truncate">
+                      @{appUser.username}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={logoutAppUser}
+                  title="Đăng xuất khỏi hệ thống"
+                  className="p-2 sm:px-3 sm:py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">Đăng xuất</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

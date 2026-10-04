@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { AuthView } from './components/AuthView';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { ToastContainer } from './components/ToastContainer';
@@ -79,10 +80,25 @@ const MainLayout: React.FC = () => {
   );
 };
 
+const AppContent: React.FC = () => {
+  const { appUser } = useApp();
+
+  if (!appUser) {
+    return (
+      <>
+        <ToastContainer />
+        <AuthView />
+      </>
+    );
+  }
+
+  return <MainLayout />;
+};
+
 export default function App() {
   return (
     <AppProvider>
-      <MainLayout />
+      <AppContent />
     </AppProvider>
   );
 }

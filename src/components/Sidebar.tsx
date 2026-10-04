@@ -13,6 +13,8 @@ import {
   Settings,
   ShieldCheck,
   X,
+  LogOut,
+  User,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,7 +30,16 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) => {
-  const { activeTab, setActiveTab, classes, students, assignments, overallStats } = useApp();
+  const {
+    activeTab,
+    setActiveTab,
+    classes,
+    students,
+    assignments,
+    overallStats,
+    appUser,
+    logoutAppUser,
+  } = useApp();
 
   const navItems: NavItem[] = [
     { key: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
@@ -108,14 +119,42 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
         })}
       </div>
 
-      {/* Safety & LocalStorage Note in Footer */}
-      <div className="p-4 m-3 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs text-slate-600 space-y-2">
-        <div className="flex items-center gap-1.5 font-semibold text-slate-700">
-          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Lưu trữ nội bộ an toàn</span>
+      {/* User Account & Logout in Sidebar Footer */}
+      {appUser && (
+        <div className="p-3 m-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+              {appUser.fullName.charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-slate-900 truncate">
+                {appUser.fullName}
+              </div>
+              <div className="text-[11px] text-slate-500 font-mono truncate">
+                @{appUser.username}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={logoutAppUser}
+            className="w-full py-1.5 px-3 bg-white hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Đăng xuất</span>
+          </button>
         </div>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          Dữ liệu học tập được lưu cục bộ trên thiết bị của thầy. Không truyền tải ra máy chủ bên ngoài.
+      )}
+
+      {/* Safety & LocalStorage Note in Footer */}
+      <div className="p-3 mx-3 mb-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-[11px] text-emerald-800 space-y-1">
+        <div className="flex items-center gap-1.5 font-bold">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <span>Hệ thống bảo mật</span>
+        </div>
+        <p className="text-[10px] text-slate-600 leading-relaxed">
+          Tài khoản và dữ liệu quản lý học sinh được lưu trữ bảo mật.
         </p>
       </div>
     </div>

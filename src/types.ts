@@ -1,5 +1,14 @@
 export type GradeType = 'TX' | 'BT' | 'GK' | 'CK';
 
+export interface AppUser {
+  id: string;
+  username: string;
+  fullName: string;
+  email?: string;
+  role?: 'teacher' | 'admin';
+  createdAt?: string;
+}
+
 export interface TeacherProfile {
   name: string;
   subject: string;
