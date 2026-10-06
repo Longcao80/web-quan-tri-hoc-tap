@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
 import { useApp } from '../context/AppContext';
 import { GradeRecord, GradeType, Student } from '../types';
 import { ConfirmModal } from './ConfirmModal';
+import { ExcelGradeImportModal } from './ExcelGradeImportModal';
 import {
   Award,
   Plus,
@@ -14,6 +16,8 @@ import {
   Calendar,
   Layers,
   Sparkles,
+  FileSpreadsheet,
+  FileDown,
 } from 'lucide-react';
 
 export const GradesView: React.FC = () => {
@@ -22,6 +26,7 @@ export const GradesView: React.FC = () => {
     students,
     classes,
     addGrade,
+    addGradesBatch,
     updateGrade,
     deleteGrade,
     teacherProfile,
@@ -36,6 +41,7 @@ export const GradesView: React.FC = () => {
 
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
   const [editingGrade, setEditingGrade] = useState<GradeRecord | null>(null);
   const [gradeToDelete, setGradeToDelete] = useState<GradeRecord | null>(null);
   const [showFormulaModal, setShowFormulaModal] = useState(false);
@@ -155,6 +161,46 @@ export const GradesView: React.FC = () => {
     setShowFormulaModal(false);
   };
 
+  const handleExportExcel = () => {
+    const exportData = [
+      ['BẢNG ĐIỂM HỌC SINH MÔN TOÁN - THẦY KIỀU CAO LONG'],
+      [`Trường THCS Thạch Thất 2 - Phân hiệu Cẩm Yên | Thời gian xuất: ${new Date().toLocaleDateString('vi-VN')}`],
+      ['STT', 'Mã HS', 'Họ và tên', 'Lớp', 'Loại điểm', 'Tên bài kiểm tra', 'Điểm số', 'Ngày kiểm tra', 'Ghi chú'],
+      ...filteredGrades.map((g, idx) => {
+        const student = students.find((s) => s.id === g.studentId);
+        const typeLabel = examTypeLabels[g.examType]?.label || g.examType;
+        return [
+          idx + 1,
+          student?.code || '',
+          student?.name || '',
+          student?.className || '',
+          `${g.examType} (${typeLabel})`,
+          g.title,
+          g.score,
+          g.date || '',
+          g.notes || '',
+        ];
+      }),
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
+    ws['!cols'] = [
+      { wch: 6 },
+      { wch: 14 },
+      { wch: 25 },
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 30 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 25 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'BangDiem');
+    const classLabel = selectedClassId === 'all' ? 'TatCaCacLop' : `Lop_${classes.find((c) => c.id === selectedClassId)?.name || selectedClassId}`;
+    XLSX.writeFile(wb, `Bang_diem_Toan_${classLabel}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {/* Top Header */}
@@ -169,7 +215,27 @@ export const GradesView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* Nút Nhập điểm bằng Excel */}
+          <button
+            onClick={() => setIsExcelModalOpen(true)}
+            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold text-xs sm:text-sm shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+            title="Nhập bảng điểm học sinh từ file Excel"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Nhập bằng Excel</span>
+          </button>
+
+          {/* Nút Xuất Excel */}
+          <button
+            onClick={handleExportExcel}
+            className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl font-semibold text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer"
+            title="Xuất bảng điểm ra file Excel"
+          >
+            <FileDown className="w-4 h-4 text-emerald-600" />
+            <span className="hidden sm:inline">Xuất Excel</span>
+          </button>
+
           <button
             onClick={() => {
               setWeightsForm(teacherProfile.gradingWeights);
@@ -178,7 +244,7 @@ export const GradesView: React.FC = () => {
             className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer"
           >
             <SlidersHorizontal className="w-4 h-4" />
-            <span>Công thức tính ĐTB</span>
+            <span>Công thức ĐTB</span>
           </button>
           <button
             onClick={handleOpenAdd}
@@ -569,6 +635,17 @@ export const GradesView: React.FC = () => {
         confirmText="Xóa điểm"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setGradeToDelete(null)}
+      />
+
+      {/* Excel Grade Import Modal */}
+      <ExcelGradeImportModal
+        isOpen={isExcelModalOpen}
+        onClose={() => setIsExcelModalOpen(false)}
+        classes={classes}
+        students={students}
+        onImport={(newGrades, updateExisting) => {
+          addGradesBatch(newGrades, updateExisting);
+        }}
       />
     </div>
   );

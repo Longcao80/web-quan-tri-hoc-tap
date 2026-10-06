@@ -103,6 +103,7 @@ interface AppContextType {
   toggleAssignmentCompletion: (assignmentId: string, studentId: string, isCompleted: boolean) => void;
   grades: GradeRecord[];
   addGrade: (grade: Omit<GradeRecord, 'id'>) => void;
+  addGradesBatch: (newGrades: (Omit<GradeRecord, 'id'> & { id?: string })[], updateExisting?: boolean) => { added: number; updated: number };
   updateGrade: (id: string, grade: Partial<GradeRecord>) => void;
   deleteGrade: (id: string) => void;
   attendance: AttendanceRecord[];
@@ -708,6 +709,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     triggerSupabaseWrite(() => saveGradeToSupabase(newGrade));
   };
 
+  const addGradesBatch = (
+    newGrades: (Omit<GradeRecord, 'id'> & { id?: string })[],
+    updateExisting: boolean = true
+  ) => {
+    let addedCount = 0;
+    let updatedCount = 0;
+    const modifiedOrCreatedGrades: GradeRecord[] = [];
+
+    setGrades((prev) => {
+      const next = [...prev];
+
+      newGrades.forEach((gData, idx) => {
+        // Find existing record by studentId, examType, and title
+        const existingIndex = next.findIndex(
+          (item) =>
+            item.studentId === gData.studentId &&
+            item.examType === gData.examType &&
+            item.title.trim().toLowerCase() === gData.title.trim().toLowerCase()
+        );
+
+        if (existingIndex >= 0 && updateExisting) {
+          const updatedItem: GradeRecord = {
+            ...next[existingIndex],
+            score: Number(gData.score),
+            date: gData.date || next[existingIndex].date,
+            notes: gData.notes !== undefined ? gData.notes : next[existingIndex].notes,
+          };
+          next[existingIndex] = updatedItem;
+          modifiedOrCreatedGrades.push(updatedItem);
+          updatedCount++;
+        } else {
+          const newItem: GradeRecord = {
+            id: gData.id || `g-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+            studentId: gData.studentId,
+            classId: gData.classId,
+            assignmentId: gData.assignmentId,
+            examType: gData.examType,
+            title: gData.title,
+            score: Number(gData.score),
+            date: gData.date,
+            notes: gData.notes || '',
+          };
+          next.unshift(newItem);
+          modifiedOrCreatedGrades.push(newItem);
+          addedCount++;
+        }
+      });
+
+      return next;
+    });
+
+    if (addedCount > 0 && updatedCount > 0) {
+      showToast(`Đã thêm mới ${addedCount} và cập nhật ${updatedCount} điểm số từ file Excel.`);
+    } else if (addedCount > 0) {
+      showToast(`Đã nhập thành công ${addedCount} điểm số từ file Excel.`);
+    } else if (updatedCount > 0) {
+      showToast(`Đã cập nhật ${updatedCount} điểm số từ file Excel.`);
+    }
+
+    if (currentUser && modifiedOrCreatedGrades.length > 0) {
+      triggerCloudWrite(async () => {
+        for (const grd of modifiedOrCreatedGrades) {
+          await saveGradeToCloud(currentUser, grd);
+        }
+      });
+    }
+
+    if (modifiedOrCreatedGrades.length > 0) {
+      triggerSupabaseWrite(async () => {
+        for (const grd of modifiedOrCreatedGrades) {
+          await saveGradeToSupabase(grd);
+        }
+        return true;
+      });
+    }
+
+    return { added: addedCount, updated: updatedCount };
+  };
+
   const updateGrade = (id: string, updated: Partial<GradeRecord>) => {
     let updatedGradeItem: GradeRecord | null = null;
     setGrades((prev) =>
@@ -1294,6 +1374,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleAssignmentCompletion,
         grades,
         addGrade,
+        addGradesBatch,
         updateGrade,
         deleteGrade,
         attendance,
