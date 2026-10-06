@@ -346,6 +346,21 @@ export async function deleteStudentFromSupabase(id: string): Promise<boolean> {
   }
 }
 
+export async function deleteStudentsBatchFromSupabase(ids: string[]): Promise<boolean> {
+  if (!ids || ids.length === 0) return true;
+  try {
+    await supabase.from('grades').delete().in('student_id', ids);
+    await supabase.from('attendance').delete().in('student_id', ids);
+    await supabase.from('student_assignments').delete().in('student_id', ids);
+    const { error } = await supabase.from('students').delete().in('id', ids);
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn('Lỗi xóa học sinh hàng loạt trên Supabase:', err);
+    return false;
+  }
+}
+
 // 4. Assignments
 export async function saveAssignmentToSupabase(asg: Assignment): Promise<boolean> {
   try {

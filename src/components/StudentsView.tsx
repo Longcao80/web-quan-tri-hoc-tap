@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { useApp } from '../context/AppContext';
 import { Student } from '../types';
@@ -20,6 +20,8 @@ import {
   UserCheck,
   FileSpreadsheet,
   FileDown,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 
 export const StudentsView: React.FC = () => {
@@ -30,6 +32,7 @@ export const StudentsView: React.FC = () => {
     addStudentsBatch,
     updateStudent,
     deleteStudent,
+    deleteStudentsBatch,
     getStudentProgress,
     grades,
     attendance,
@@ -41,6 +44,10 @@ export const StudentsView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   const [selectedGender, setSelectedGender] = useState<string>('all');
+
+  // Multi-select & Batch Delete States
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
 
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -68,6 +75,44 @@ export const StudentsView: React.FC = () => {
     const matchesGender = selectedGender === 'all' || s.gender === selectedGender;
     return matchesSearch && matchesClass && matchesGender;
   });
+
+  // Batch selection helpers
+  const filteredStudentIds = useMemo(() => filteredStudents.map((s) => s.id), [filteredStudents]);
+
+  const isAllFilteredSelected =
+    filteredStudents.length > 0 &&
+    filteredStudents.every((s) => selectedStudentIds.includes(s.id));
+
+  const isSomeFilteredSelected =
+    filteredStudents.some((s) => selectedStudentIds.includes(s.id)) && !isAllFilteredSelected;
+
+  const handleToggleSelectAll = () => {
+    if (isAllFilteredSelected) {
+      setSelectedStudentIds((prev) => prev.filter((id) => !filteredStudentIds.includes(id)));
+    } else {
+      setSelectedStudentIds((prev) => Array.from(new Set([...prev, ...filteredStudentIds])));
+    }
+  };
+
+  const handleSelectAllStudentsInSystem = () => {
+    setSelectedStudentIds(students.map((s) => s.id));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedStudentIds([]);
+  };
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedStudentIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleBatchDeleteConfirm = () => {
+    deleteStudentsBatch(selectedStudentIds);
+    setSelectedStudentIds([]);
+    setIsBatchDeleteModalOpen(false);
+  };
 
   const handleOpenAdd = () => {
     setEditingStudent(null);
@@ -192,6 +237,18 @@ export const StudentsView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          {/* Nút Xóa học sinh đã chọn nếu có chọn */}
+          {selectedStudentIds.length > 0 && (
+            <button
+              onClick={() => setIsBatchDeleteModalOpen(true)}
+              className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold text-sm shadow-xs transition-all flex items-center gap-2 cursor-pointer animate-in fade-in"
+              title="Xóa vĩnh viễn các học sinh đã chọn"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Xóa đã chọn ({selectedStudentIds.length})</span>
+            </button>
+          )}
+
           {/* Nút Thêm bằng Excel */}
           <button
             onClick={() => setIsExcelModalOpen(true)}
@@ -267,12 +324,68 @@ export const StudentsView: React.FC = () => {
         </div>
       </div>
 
+      {/* Bulk Action Toolbar */}
+      {selectedStudentIds.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-indigo-50/90 border border-indigo-200 text-indigo-950 px-4 py-3 rounded-2xl animate-in slide-in-from-top-2 duration-150 shadow-2xs">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="inline-flex items-center justify-center min-w-6 h-6 px-1.5 rounded-lg bg-indigo-600 text-white font-bold text-xs">
+              {selectedStudentIds.length}
+            </span>
+            <span className="font-semibold text-slate-800">
+              Đã chọn <strong>{selectedStudentIds.length}</strong> / {students.length} học sinh
+            </span>
+            {selectedClassId !== 'all' && (
+              <span className="text-xs text-indigo-700 bg-white/70 px-2 py-0.5 rounded-md border border-indigo-100 hidden md:inline">
+                Lớp {classes.find((c) => c.id === selectedClassId)?.name}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSelectAllStudentsInSystem}
+              className="px-3 py-1.5 text-xs font-semibold bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl transition-colors cursor-pointer"
+            >
+              Chọn toàn bộ ({students.length} HS)
+            </button>
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="px-3 py-1.5 text-xs font-semibold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-xl transition-colors cursor-pointer"
+            >
+              Bỏ chọn
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsBatchDeleteModalOpen(true)}
+              className="px-3.5 py-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Xóa {selectedStudentIds.length} học sinh đã chọn</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Students Data Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase">
+                <th className="py-3.5 px-3 w-11 text-center">
+                  <input
+                    type="checkbox"
+                    title={isAllFilteredSelected ? 'Bỏ chọn tất cả học sinh đang hiển thị' : 'Chọn tất cả học sinh đang hiển thị'}
+                    checked={isAllFilteredSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isSomeFilteredSelected;
+                    }}
+                    onChange={handleToggleSelectAll}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                  />
+                </th>
                 <th className="py-3.5 px-4">Mã HS</th>
                 <th className="py-3.5 px-4">Họ và tên</th>
                 <th className="py-3.5 px-4">Lớp</th>
@@ -286,16 +399,31 @@ export const StudentsView: React.FC = () => {
             <tbody className="divide-y divide-slate-100">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-500 text-sm">
+                  <td colSpan={9} className="py-12 text-center text-slate-500 text-sm">
                     Không tìm thấy học sinh nào phù hợp với bộ lọc.
                   </td>
                 </tr>
               ) : (
                 filteredStudents.map((student) => {
                   const prog = getStudentProgress(student);
+                  const isSelected = selectedStudentIds.includes(student.id);
 
                   return (
-                    <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr
+                      key={student.id}
+                      className={`transition-colors ${
+                        isSelected ? 'bg-indigo-50/60 hover:bg-indigo-50/80' : 'hover:bg-slate-50/80'
+                      }`}
+                    >
+                      <td className="py-3.5 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelect(student.id)}
+                          aria-label={`Chọn học sinh ${student.name}`}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                        />
+                      </td>
                       <td className="py-3.5 px-4 font-mono text-xs font-bold text-slate-600">
                         {student.code}
                       </td>
@@ -697,7 +825,7 @@ export const StudentsView: React.FC = () => {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Single Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={Boolean(studentToDelete)}
         title="Xác nhận xóa học sinh"
@@ -705,6 +833,16 @@ export const StudentsView: React.FC = () => {
         confirmText="Xóa học sinh"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setStudentToDelete(null)}
+      />
+
+      {/* Batch Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={isBatchDeleteModalOpen}
+        title={`Xác nhận xóa ${selectedStudentIds.length} học sinh`}
+        message={`Thầy có chắc chắn muốn xóa vĩnh viễn ${selectedStudentIds.length} học sinh đã chọn khỏi danh sách? Toàn bộ điểm số, lịch sử điểm danh và bài tập liên quan của các học sinh này cũng sẽ bị xóa khỏi hệ thống.`}
+        confirmText={`Xóa ${selectedStudentIds.length} học sinh`}
+        onConfirm={handleBatchDeleteConfirm}
+        onCancel={() => setIsBatchDeleteModalOpen(false)}
       />
 
       {/* Excel Import Modal */}

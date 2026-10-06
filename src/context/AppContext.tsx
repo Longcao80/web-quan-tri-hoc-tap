@@ -42,6 +42,7 @@ import {
   deleteClassFromCloud,
   saveStudentToCloud,
   deleteStudentFromCloud,
+  deleteStudentsBatchFromCloud,
   saveAssignmentToCloud,
   deleteAssignmentFromCloud,
   saveGradeToCloud,
@@ -59,6 +60,7 @@ import {
   deleteClassFromSupabase,
   saveStudentToSupabase,
   deleteStudentFromSupabase,
+  deleteStudentsBatchFromSupabase,
   saveAssignmentToSupabase,
   deleteAssignmentFromSupabase,
   saveGradeToSupabase,
@@ -92,6 +94,7 @@ interface AppContextType {
   addStudentsBatch: (newStudents: Omit<Student, 'id'>[], updateExisting?: boolean) => { added: number; updated: number };
   updateStudent: (id: string, student: Partial<Student>) => void;
   deleteStudent: (id: string) => void;
+  deleteStudentsBatch: (ids: string[]) => void;
   assignments: Assignment[];
   addAssignment: (asg: Omit<Assignment, 'id'>) => void;
   updateAssignment: (id: string, asg: Partial<Assignment>) => void;
@@ -610,6 +613,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       triggerCloudWrite(() => deleteStudentFromCloud(currentUser, id));
     }
     triggerSupabaseWrite(() => deleteStudentFromSupabase(id));
+  };
+
+  const deleteStudentsBatch = (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const idsSet = new Set(ids);
+    setStudents((prev) => prev.filter((s) => !idsSet.has(s.id)));
+    setGrades((prev) => prev.filter((g) => !idsSet.has(g.studentId)));
+    setAttendance((prev) => prev.filter((a) => !idsSet.has(a.studentId)));
+    setStudentAssignments((prev) => prev.filter((sa) => !idsSet.has(sa.studentId)));
+    showToast(`Đã xóa thành công ${ids.length} học sinh.`, 'info');
+    if (currentUser) {
+      triggerCloudWrite(() => deleteStudentsBatchFromCloud(currentUser, ids));
+    }
+    triggerSupabaseWrite(() => deleteStudentsBatchFromSupabase(ids));
   };
 
   // Assignment actions
@@ -1268,6 +1285,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addStudentsBatch,
         updateStudent,
         deleteStudent,
+        deleteStudentsBatch,
         assignments,
         addAssignment,
         updateAssignment,

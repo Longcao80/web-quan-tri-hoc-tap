@@ -127,6 +127,19 @@ export async function deleteStudentFromCloud(user: User, rawStudentId: string) {
   }
 }
 
+export async function deleteStudentsBatchFromCloud(user: User, rawStudentIds: string[]) {
+  if (!rawStudentIds || rawStudentIds.length === 0) return;
+  const teacherId = sanitizeDocId(user.uid);
+  try {
+    for (const rawId of rawStudentIds) {
+      const studentId = sanitizeDocId(rawId);
+      await deleteDoc(doc(db, 'teachers', teacherId, 'students', studentId));
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `teachers/${teacherId}/students`);
+  }
+}
+
 // 4. Assignments
 export async function saveAssignmentToCloud(user: User, item: Assignment) {
   const teacherId = sanitizeDocId(user.uid);
